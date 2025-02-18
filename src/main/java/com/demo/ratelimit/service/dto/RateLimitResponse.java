@@ -1,4 +1,4 @@
-package com.demo.ratelimit.dto;
+package com.demo.ratelimit.service.dto;
 
 import java.time.Instant;
 
