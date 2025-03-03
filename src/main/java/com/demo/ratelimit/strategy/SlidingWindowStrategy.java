@@ -3,23 +3,50 @@ package com.demo.ratelimit.strategy;
 import com.demo.ratelimit.service.dto.QuotaConfig;
 import com.demo.ratelimit.service.dto.RateLimitResponse;
 import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.core.script.RedisScript;
 
 import java.time.Instant;
+import java.util.Collections;
 import java.util.Objects;
 
 /**
- * SlidingWindowStrategy - Simple non-atomic implementation.
- * Tracks request timestamps in Redis sorted set.
- * WARNING: This implementation has race conditions - see Phase 3 for atomic version.
+ * SlidingWindowStrategy - atomic add/remove/count via Lua script.
+ * Prevents race conditions in concurrent timestamp operations.
  */
 public class SlidingWindowStrategy implements RateLimitStrategy {
     private final RedisTemplate<String, String> redisTemplate;
     private final QuotaConfig quotaConfig;
     private static final String RATE_LIMIT_KEY_PREFIX = "ratelimit:sliding:";
 
+    /**
+     * Lua script: atomically remove expired entries, add current timestamp, and count.
+     * Returns positive count if allowed, negative if exceeded.
+     */
+    private static final String LUA_SCRIPT = 
+        "local current_time = tonumber(ARGV[1])\n" +
+        "local window_seconds = tonumber(ARGV[2])\n" +
+        "local limit = tonumber(ARGV[3])\n" +
+        "local window_start = current_time - window_seconds\n" +
+        "\n" +
+        "redis.call('ZREMRANGEBYSCORE', KEYS[1], 0, window_start)\n" +
+        "redis.call('ZADD', KEYS[1], current_time, tostring(current_time))\n" +
+        "local count = redis.call('ZCARD', KEYS[1])\n" +
+        "redis.call('EXPIRE', KEYS[1], window_seconds + 1)\n" +
+        "\n" +
+        "if count <= limit then\n" +
+        "  return count\n" +
+        "else\n" +
+        "  return -count\n" +
+        "end\n";
+
+    private final RedisScript<Long> luaScript;
+
     public SlidingWindowStrategy(RedisTemplate<String, String> redisTemplate, QuotaConfig quotaConfig) {
         this.redisTemplate = Objects.requireNonNull(redisTemplate, "redisTemplate cannot be null");
         this.quotaConfig = Objects.requireNonNull(quotaConfig, "quotaConfig cannot be null");
+
+        // Create RedisScript for Lua evaluation
+        this.luaScript = RedisScript.of(LUA_SCRIPT, Long.class);
     }
 
     @Override
@@ -33,23 +60,17 @@ public class SlidingWindowStrategy implements RateLimitStrategy {
         long windowDurationSeconds = quotaConfig.getWindow().toSeconds();
         String redisKey = RATE_LIMIT_KEY_PREFIX + key;
 
-        // Non-atomic operations: remove old entries, add current, count
-        long windowStart = currentTimeSeconds - windowDurationSeconds;
-        
-        // Remove expired entries outside window
-        redisTemplate.opsForZSet().removeRangeByScore(redisKey, 0, windowStart);
-        
-        // Add current timestamp as a member
-        redisTemplate.opsForZSet().add(redisKey, String.valueOf(currentTimeSeconds), (double) currentTimeSeconds);
-        
-        // Set expiration
-        redisTemplate.expire(redisKey, quotaConfig.getWindow());
-        
-        // Count total entries in window
-        Long count = redisTemplate.opsForZSet().size(redisKey);
-        long requestCount = count != null ? count : 0;
-        
-        boolean allowed = requestCount <= quotaConfig.getLimit();
+        // Execute Lua script atomically (result > 0 if allowed, < 0 if denied)
+        Long result = redisTemplate.execute(
+            luaScript,
+            Collections.singletonList(redisKey),
+            String.valueOf(currentTimeSeconds),
+            String.valueOf(windowDurationSeconds),
+            String.valueOf(quotaConfig.getLimit())
+        );
+
+        long requestCount = Math.abs(result != null ? result : 0);
+        boolean allowed = result != null && result > 0;
         int remaining = Math.max(0, quotaConfig.getLimit() - (int) requestCount);
 
         long resetTimeSeconds = currentTimeSeconds + windowDurationSeconds;
