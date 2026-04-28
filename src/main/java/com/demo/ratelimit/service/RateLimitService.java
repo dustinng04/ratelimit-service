@@ -47,6 +47,10 @@ public class RateLimitService {
             logRateLimitDecision(request, quotaConfig, response);
 
             return response;
+        } catch (Exception e) {
+            logger.error("Redis error during rate limiting, falling back to ALLOW: {}", e.getMessage());
+            // Fallback: Fail-open to avoid bringing down the service when Redis is unavailable
+            return new RateLimitResponse(true, 1, java.time.Instant.now().plusSeconds(60));
         } finally {
             metricsCollector.recordLatencyStop(sample);
         }

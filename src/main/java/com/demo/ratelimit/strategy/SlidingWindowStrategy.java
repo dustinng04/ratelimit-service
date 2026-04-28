@@ -8,6 +8,7 @@ import org.springframework.data.redis.core.script.RedisScript;
 import java.time.Instant;
 import java.util.Collections;
 import java.util.Objects;
+import java.util.UUID;
 
 /**
  * SlidingWindowStrategy - atomic add/remove/count via Lua script.
@@ -26,10 +27,11 @@ public class SlidingWindowStrategy implements RateLimitStrategy {
         "local current_time = tonumber(ARGV[1])\n" +
         "local window_seconds = tonumber(ARGV[2])\n" +
         "local limit = tonumber(ARGV[3])\n" +
+        "local request_id = ARGV[4]\n" +
         "local window_start = current_time - window_seconds\n" +
         "\n" +
         "redis.call('ZREMRANGEBYSCORE', KEYS[1], 0, window_start)\n" +
-        "redis.call('ZADD', KEYS[1], current_time, tostring(current_time))\n" +
+        "redis.call('ZADD', KEYS[1], current_time, request_id)\n" +
         "local count = redis.call('ZCARD', KEYS[1])\n" +
         "redis.call('EXPIRE', KEYS[1], window_seconds + 1)\n" +
         "\n" +
@@ -60,13 +62,13 @@ public class SlidingWindowStrategy implements RateLimitStrategy {
         long windowDurationSeconds = quotaConfig.getWindow().toSeconds();
         String redisKey = RATE_LIMIT_KEY_PREFIX + key;
 
-        // Execute Lua script atomically (result > 0 if allowed, < 0 if denied)
         Long result = redisTemplate.execute(
             luaScript,
             Collections.singletonList(redisKey),
             String.valueOf(currentTimeSeconds),
             String.valueOf(windowDurationSeconds),
-            String.valueOf(quotaConfig.getLimit())
+            String.valueOf(quotaConfig.getLimit()),
+            UUID.randomUUID().toString()
         );
 
         long requestCount = Math.abs(result != null ? result : 0);

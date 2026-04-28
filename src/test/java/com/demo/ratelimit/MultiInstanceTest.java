@@ -3,6 +3,7 @@ package com.demo.ratelimit;
 import com.demo.ratelimit.service.dto.QuotaConfig;
 import com.demo.ratelimit.service.dto.RateLimitResponse;
 import com.demo.ratelimit.strategy.AtomicRateLimiter;
+import com.demo.ratelimit.strategy.NonAtomicRateLimiter;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -44,7 +45,8 @@ class MultiInstanceTest {
     @BeforeEach
     void setUp() {
         // Clean up before each test
-        clearRedisKey(TEST_KEY);
+        clearRedisKey("ratelimit:atomic:", TEST_KEY);
+        clearRedisKey("ratelimit:nonatomic:", TEST_KEY);
     }
 
     /**
@@ -110,9 +112,65 @@ class MultiInstanceTest {
         assertEquals(totalThreads - LIMIT, denied, "Remaining requests should be denied");
     }
 
-    private void clearRedisKey(String key) {
+    @Test
+    void multiInstanceWithNonAtomic() throws InterruptedException {
+        System.out.println("\n=== MULTI-INSTANCE TEST (WITHOUT ATOMIC OPERATIONS) ===");
+        System.out.println("Simulating 3 instances with 50 threads each = 150 concurrent requests");
+        System.out.println("Limit: " + LIMIT + " requests per window\n");
+
+        QuotaConfig config = new QuotaConfig(QuotaConfig.Strategy.FIXED_WINDOW, LIMIT, WINDOW);
+        NonAtomicRateLimiter rateLimiter = new NonAtomicRateLimiter(redisTemplate, config);
+
+        int numInstances = 3;
+        int threadsPerInstance = 50;
+        int totalThreads = numInstances * threadsPerInstance;
+
+        AtomicInteger allowedCount = new AtomicInteger(0);
+        AtomicInteger deniedCount = new AtomicInteger(0);
+        CountDownLatch startLatch = new CountDownLatch(1);
+        CountDownLatch endLatch = new CountDownLatch(totalThreads);
+        ExecutorService executor = Executors.newFixedThreadPool(totalThreads);
+
+        // Launch all threads simulating multiple instances
+        for (int instance = 0; instance < numInstances; instance++) {
+            for (int i = 0; i < threadsPerInstance; i++) {
+                executor.submit(() -> {
+                    try {
+                        startLatch.await(); // Wait for all threads to be ready
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    }
+
+                    RateLimitResponse response = rateLimiter.getRateLimit(TEST_KEY);
+                    if (response.isAllowed()) {
+                        allowedCount.incrementAndGet();
+                    } else {
+                        deniedCount.incrementAndGet();
+                    }
+                    endLatch.countDown();
+                });
+            }
+        }
+
+        startLatch.countDown();
+        endLatch.await();
+        executor.shutdown();
+
+        int allowed = allowedCount.get();
+        int denied = deniedCount.get();
+
+        System.out.printf("Results: Allowed=%d, Denied=%d%n", allowed, denied);
+        System.out.printf("Expected: %d (exact limit)%n", LIMIT);
+        System.out.printf("Difference: %d%n", allowed - LIMIT);
+        System.out.println("\n✗ RESULT: Non-atomic operations ALLOWED MORE than limit (Race Condition)");
+
+        // Verification - Because of race conditions, allowed count will be HIGHER than the limit
+        org.junit.jupiter.api.Assertions.assertTrue(allowed > LIMIT, "Race condition should allow more requests than the limit");
+    }
+
+    private void clearRedisKey(String prefix, String key) {
         long windowStart = (System.currentTimeMillis() / 1000 / WINDOW.toSeconds()) * WINDOW.toSeconds();
-        String fullKey = "ratelimit:atomic:" + key + ":" + windowStart;
+        String fullKey = prefix + key + ":" + windowStart;
         redisTemplate.delete(fullKey);
     }
 }
