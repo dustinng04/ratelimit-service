@@ -12,9 +12,9 @@ management:
     web:
       exposure:
         include: prometheus,health,info
-  metrics:
-    export:
-      prometheus:
+  prometheus:
+    metrics:
+      export:
         enabled: true
 
 logging:
