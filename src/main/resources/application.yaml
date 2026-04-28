@@ -19,4 +19,8 @@ management:
 
 logging:
   level:
+    root: INFO
     com.demo.ratelimit: DEBUG
+    com.demo.ratelimit.decisions: INFO
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} - %logger{36} - %msg%n"
