@@ -20,6 +20,7 @@ import org.springframework.test.context.ActiveProfiles;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -424,8 +425,8 @@ class StrategyUnitTests {
         @Test
         @DisplayName("Should record total requests metric")
         void testRecordTotalRequests() {
-            testMetrics.recordRequest(true);
-            testMetrics.recordRequest(false);
+            testMetrics.recordRequest("FIXED_WINDOW", TEST_KEY, true);
+            testMetrics.recordRequest("FIXED_WINDOW", TEST_KEY, false);
 
             Counter counter = testRegistry.find("ratelimit.requests.total").counter();
             assertNotNull(counter, "Total requests counter should exist");
@@ -435,8 +436,8 @@ class StrategyUnitTests {
         @Test
         @DisplayName("Should record allowed requests metric")
         void testRecordAllowedRequests() {
-            testMetrics.recordRequest(true);
-            testMetrics.recordRequest(true);
+            testMetrics.recordRequest("FIXED_WINDOW", TEST_KEY, true);
+            testMetrics.recordRequest("FIXED_WINDOW", TEST_KEY, true);
 
             Counter counter = testRegistry.find("ratelimit.requests.allowed").counter();
             assertNotNull(counter, "Allowed requests counter should exist");
@@ -446,8 +447,8 @@ class StrategyUnitTests {
         @Test
         @DisplayName("Should record throttled requests metric")
         void testRecordThrottledRequests() {
-            testMetrics.recordRequest(false);
-            testMetrics.recordRequest(false);
+            testMetrics.recordRequest("FIXED_WINDOW", TEST_KEY, false);
+            testMetrics.recordRequest("FIXED_WINDOW", TEST_KEY, false);
 
             Counter counter = testRegistry.find("ratelimit.requests.throttled").counter();
             assertNotNull(counter, "Throttled requests counter should exist");
@@ -457,21 +458,25 @@ class StrategyUnitTests {
         @Test
         @DisplayName("Should increment metrics correctly")
         void testIncrementMetrics() {
-            testMetrics.recordRequest(true);
+            testMetrics.recordRequest("FIXED_WINDOW", TEST_KEY, true);
 
             Counter totalCounter = testRegistry.find("ratelimit.requests.total").counter();
             Counter allowedCounter = testRegistry.find("ratelimit.requests.allowed").counter();
             Counter throttledCounter = testRegistry.find("ratelimit.requests.throttled").counter();
 
-            assertEquals(1.0, totalCounter.count(), "Total should be 1");
-            assertEquals(1.0, allowedCounter.count(), "Allowed should be 1");
-            assertEquals(0.0, throttledCounter.count(), "Throttled should be 0");
+            assertEquals(1.0, totalCounter != null ? totalCounter.count() : 0.0, "Total should be 1");
+            assertEquals(1.0, allowedCounter != null ? allowedCounter.count() : 0.0, "Allowed should be 1");
+            assertEquals(0.0, throttledCounter != null ? throttledCounter.count() : 0.0, "Throttled should be 0");
 
-            testMetrics.recordRequest(false);
+            testMetrics.recordRequest("FIXED_WINDOW", TEST_KEY, false);
 
-            assertEquals(2.0, totalCounter.count(), "Total should be 2");
-            assertEquals(1.0, allowedCounter.count(), "Allowed should still be 1");
-            assertEquals(1.0, throttledCounter.count(), "Throttled should now be 1");
+            totalCounter = testRegistry.find("ratelimit.requests.total").counter();
+            allowedCounter = testRegistry.find("ratelimit.requests.allowed").counter();
+            throttledCounter = testRegistry.find("ratelimit.requests.throttled").counter();
+
+            assertEquals(2.0, totalCounter != null ? totalCounter.count() : 0.0, "Total should be 2");
+            assertEquals(1.0, allowedCounter != null ? allowedCounter.count() : 0.0, "Allowed should still be 1");
+            assertEquals(1.0, throttledCounter != null ? throttledCounter.count() : 0.0, "Throttled should now be 1");
         }
 
         @Test
@@ -486,12 +491,12 @@ class StrategyUnitTests {
                 Thread.currentThread().interrupt();
             }
 
-            testMetrics.recordLatencyStop(sample);
+            testMetrics.recordLatencyStop(sample, "FIXED_WINDOW", TEST_KEY);
 
             var timer = testRegistry.find("ratelimit.request.latency").timer();
             assertNotNull(timer, "Latency timer should exist");
             assertTrue(timer.count() > 0, "Should have recorded at least one latency sample");
-            assertTrue(timer.totalTime(java.util.concurrent.TimeUnit.MILLISECONDS) >= 10,
+            assertTrue(timer.totalTime(TimeUnit.MILLISECONDS) >= 10,
                     "Latency should be at least 10ms");
         }
     }

@@ -7,37 +7,34 @@ import org.springframework.stereotype.Component;
 
 @Component
 public class MetricsCollector {
-
-    private final Counter totalRequests;
-    private final Counter allowedRequests;
-    private final Counter throttledRequests;
-    private final Timer requestLatency;
+    private final MeterRegistry meterRegistry;
 
     public MetricsCollector(MeterRegistry meterRegistry) {
-        this.totalRequests = Counter.builder("ratelimit.requests.total")
-                .description("Total rate limit requests")
-                .register(meterRegistry);
-
-        this.allowedRequests = Counter.builder("ratelimit.requests.allowed")
-                .description("Allowed rate limit requests")
-                .register(meterRegistry);
-
-        this.throttledRequests = Counter.builder("ratelimit.requests.throttled")
-                .description("Throttled rate limit requests")
-                .register(meterRegistry);
-
-        this.requestLatency = Timer.builder("ratelimit.request.latency")
-                .description("Rate limit request latency")
-                .publishPercentiles(0.5, 0.95, 0.99)
-                .register(meterRegistry);
+        this.meterRegistry = meterRegistry;
     }
 
-    public void recordRequest(boolean allowed) {
-        totalRequests.increment();
+    public void recordRequest(String strategy, String key, boolean allowed) {
+        Counter.builder("ratelimit.requests.total")
+                .description("Total rate limit requests")
+                .tag("strategy", strategy)
+                .tag("key", key)
+                .register(meterRegistry)
+                .increment();
+
         if (allowed) {
-            allowedRequests.increment();
+            Counter.builder("ratelimit.requests.allowed")
+                    .description("Allowed rate limit requests")
+                    .tag("strategy", strategy)
+                    .tag("key", key)
+                    .register(meterRegistry)
+                    .increment();
         } else {
-            throttledRequests.increment();
+            Counter.builder("ratelimit.requests.throttled")
+                    .description("Throttled rate limit requests")
+                    .tag("strategy", strategy)
+                    .tag("key", key)
+                    .register(meterRegistry)
+                    .increment();
         }
     }
 
@@ -45,7 +42,13 @@ public class MetricsCollector {
         return Timer.start();
     }
 
-    public void recordLatencyStop(Timer.Sample sample) {
-        sample.stop(requestLatency);
+    public void recordLatencyStop(Timer.Sample sample, String strategy, String key) {
+        Timer timer = Timer.builder("ratelimit.request.latency")
+                .description("Rate limit request latency")
+                .tag("strategy", strategy)
+                .tag("key", key)
+                .publishPercentiles(0.5, 0.95, 0.99)
+                .register(meterRegistry);
+        sample.stop(timer);
     }
 }

@@ -52,7 +52,7 @@ public class TokenBucketStrategy implements RateLimitStrategy {
         "if allowed then\n" +
         "  return math.floor(current_tokens)\n" +
         "else\n" +
-        "  return -math.floor(current_tokens)\n" +
+        "  return -math.floor(current_tokens) - 1\n" +
         "end\n";
 
     private final RedisScript<Long> luaScript;
@@ -77,7 +77,7 @@ public class TokenBucketStrategy implements RateLimitStrategy {
         long windowDurationSeconds = quotaConfig.getWindow().toSeconds();
         long tokenLimit = quotaConfig.getLimit();
 
-        // Execute Lua script atomically (result > 0 if allowed, < 0 if denied)
+        // Execute Lua script atomically (result >= 0 if allowed, < 0 if denied)
         Long result = redisTemplate.execute(
             luaScript,
             Collections.singletonList(redisKey),
@@ -86,8 +86,8 @@ public class TokenBucketStrategy implements RateLimitStrategy {
             String.valueOf(tokenLimit)
         );
 
-        long remainingTokens = Math.abs(result != null ? result : 0);
-        boolean allowed = result != null && result > 0;
+        boolean allowed = result != null && result >= 0;
+        long remainingTokens = allowed ? (result != null ? result : 0) : Math.abs((result != null ? result : -1) + 1);
         int remaining = (int) remainingTokens;
 
         long tokensNeededToFill = tokenLimit - remainingTokens;

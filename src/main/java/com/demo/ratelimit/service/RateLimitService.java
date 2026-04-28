@@ -34,14 +34,15 @@ public class RateLimitService {
      */
     public RateLimitResponse checkRateLimit(RateLimitRequest request, QuotaConfig quotaConfig) {
         Timer.Sample sample = metricsCollector.recordLatencyStart();
+        String key = request.getKey();
+        String strategyName = quotaConfig.getStrategy().toString();
 
         try {
-            String key = request.getKey();
             RateLimitStrategy strategy = getOrCreateStrategy(quotaConfig);
             RateLimitResponse response = strategy.getRateLimit(key);
 
             // Record metrics
-            metricsCollector.recordRequest(response.isAllowed());
+            metricsCollector.recordRequest(strategyName, key, response.isAllowed());
 
             // Structured logging
             logRateLimitDecision(request, quotaConfig, response);
@@ -50,9 +51,10 @@ public class RateLimitService {
         } catch (Exception e) {
             logger.error("Redis error during rate limiting, falling back to ALLOW: {}", e.getMessage());
             // Fallback: Fail-open to avoid bringing down the service when Redis is unavailable
+            metricsCollector.recordRequest(strategyName, key, true);
             return new RateLimitResponse(true, 1, java.time.Instant.now().plusSeconds(60));
         } finally {
-            metricsCollector.recordLatencyStop(sample);
+            metricsCollector.recordLatencyStop(sample, strategyName, key);
         }
     }
 

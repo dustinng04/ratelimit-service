@@ -16,6 +16,7 @@ import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.serializer.StringRedisSerializer;
 
 import java.time.Duration;
+import java.time.Instant;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -49,7 +50,7 @@ public class RateLimitIntegrationTest {
     void testLuaScriptExecution_NormalBehavior() {
         String key = "test-user-lua-" + UUID.randomUUID();
         QuotaConfig config = new QuotaConfig(QuotaConfig.Strategy.FIXED_WINDOW, 5, Duration.ofSeconds(60));
-        RateLimitRequest request = new RateLimitRequest(1, key, java.time.Instant.now());
+        RateLimitRequest request = new RateLimitRequest(1, key, Instant.now());
 
         // First 5 requests should be allowed
         for (int i = 0; i < 5; i++) {
@@ -67,7 +68,7 @@ public class RateLimitIntegrationTest {
         String key = "test-concurrent-" + UUID.randomUUID();
         // Limit is 10
         QuotaConfig config = new QuotaConfig(QuotaConfig.Strategy.FIXED_WINDOW, 10, Duration.ofSeconds(60));
-        RateLimitRequest request = new RateLimitRequest(2, key, java.time.Instant.now());
+        RateLimitRequest request = new RateLimitRequest(2, key, Instant.now());
 
         int numThreads = 50;
         ExecutorService executor = Executors.newFixedThreadPool(numThreads);
@@ -124,7 +125,7 @@ public class RateLimitIntegrationTest {
 
         String key = "test-fallback-" + UUID.randomUUID();
         QuotaConfig config = new QuotaConfig(QuotaConfig.Strategy.FIXED_WINDOW, 5, Duration.ofSeconds(60));
-        RateLimitRequest request = new RateLimitRequest(3, key, java.time.Instant.now());
+        RateLimitRequest request = new RateLimitRequest(3, key, Instant.now());
 
         // Even though Redis is down, it should catch the exception and allow the request (fail-open)
         RateLimitResponse response = fallbackService.checkRateLimit(request, config);
